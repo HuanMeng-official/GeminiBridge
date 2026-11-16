@@ -90,7 +90,7 @@ function scheduleReconnect() {
  * @param {Object} data 包含 requestId 和 text 的数据对象
  */
 async function handleAskGemini(data) {
-  const { requestId, text } = data;
+  const { requestId, text, modeName, modeLabel } = data;
   const tabs = await chrome.tabs.query({ url: '*://gemini.google.com/*' });
   
   if (tabs.length === 0) {
@@ -99,7 +99,7 @@ async function handleAskGemini(data) {
 
   const targetTab = tabs.find(t => t.active) || tabs[0];
 
-  chrome.tabs.sendMessage(targetTab.id, { type: 'EXTERNAL_SEND', text }, (response) => {
+  chrome.tabs.sendMessage(targetTab.id, { type: 'EXTERNAL_SEND', text, modeName, modeLabel }, (response) => {
     if (chrome.runtime.lastError) {
       return sendWsResponse(requestId, null, `通信失败: ${chrome.runtime.lastError.message}`);
     }
@@ -127,7 +127,15 @@ function sendWsResponse(requestId, content, error) {
 
 /**
  * 监听系统 Alarm，用于在 Service Worker 被强制休眠后重新唤醒
+ * 注意：这个 Alarm 在脚本启动时就创建，不能只放在 ws.onopen 里，
+ * 否则网关先没启动、插件始终连不上时，SW 休眠后将永远不再重试。
  */
+chrome.alarms.get('ws-keep-alive', (alarm) => {
+  if (!alarm) {
+    chrome.alarms.create('ws-keep-alive', { periodInMinutes: 0.5 });
+  }
+});
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'ws-keep-alive') {
     if (!ws || ws.readyState !== WebSocket.OPEN) {

@@ -9,6 +9,27 @@ const WS_PORT = 8765;
 const HTTP_PORT = 12306;
 const pendingRequests = new Map();
 
+/**
+ * 与 Gemini 网页端「模式选择器」一一对应的模型清单。
+ * 页面实际显示（2026-11 抓取）：
+ *   快速解答 → 3.5 Flash-Lite
+ *   日常帮助 → 4 Hydrogen
+ *   深度研究 → 3.1 Pro
+ *   代码与分析 → 4 Argon
+ *   高难任务 → 4 Carbon（带锁，需要更高订阅）
+ *
+ * name 是菜单项里的完整后缀，short 是选中后按钮上显示的简称（去掉了版本号，
+ * 例如 “3.1 Pro” 在按钮上显示为 “Pro”），用于切换后的校验。
+ */
+const MODELS = [
+  { id: 'gemini-3.5-flash-lite', name: '3.5 Flash-Lite', short: 'Flash-Lite', label: '快速解答' },
+  { id: 'gemini-4-hydrogen', name: 'Hydrogen', short: 'Hydrogen', label: '日常帮助' },
+  { id: 'gemini-3.1-pro', name: '3.1 Pro', short: 'Pro', label: '深度研究' },
+  { id: 'gemini-4-argon', name: 'Argon', short: 'Argon', label: '代码与分析' },
+  { id: 'gemini-4-carbon', name: 'Carbon', short: 'Carbon', label: '高难任务' },
+];
+const MODEL_BY_ID = new Map(MODELS.map((m) => [m.id, m]));
+
 const wss = new WebSocket.Server({ port: WS_PORT });
 let extensionSocket = null;
 
@@ -45,7 +66,7 @@ wss.on('connection', (ws) => {
               id: `chatcmpl-${Date.now()}`,
               object: 'chat.completion',
               created: Math.floor(Date.now() / 1000),
-              model: 'web-gemini-proxy',
+              model: pending.model,
               choices: [{
                 index: 0,
                 message: { role: 'assistant', content },
@@ -88,12 +109,13 @@ const httpServer = http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({
       object: 'list',
-      data: [{
-        id: 'web-gemini-proxy',
+      data: MODELS.map((m) => ({
+        id: m.id,
         object: 'model',
-        created: Math.floor(Date.now() / 1000),
-        owned_by: 'gemini-bridge'
-      }]
+        created: 1735689600,
+        owned_by: 'gemini-bridge',
+        name: `${m.label} / ${m.name}`,
+      })),
     }));
   }
 
@@ -114,6 +136,11 @@ const httpServer = http.createServer(async (req, res) => {
         const text = lastUserMsg.content;
         const requestId = `req-${Date.now()}`;
 
+        // 客户端传了页面里存在的模型 id 就切换模式；其余情况沿用页面当前模式。
+        const requestedModel = typeof data.model === 'string' ? data.model.trim() : '';
+        const model = MODEL_BY_ID.get(requestedModel) || null;
+        const resolvedModelId = model ? model.id : (requestedModel || 'web-gemini-proxy');
+
         if (!extensionSocket || extensionSocket.readyState !== WebSocket.OPEN) {
           await new Promise(r => setTimeout(r, 1500));
           if (!extensionSocket || extensionSocket.readyState !== WebSocket.OPEN) {
@@ -121,7 +148,7 @@ const httpServer = http.createServer(async (req, res) => {
           }
         }
 
-        console.log(`[HTTP] 收到客户端请求: "${text.substring(0, 15)}..."`);
+        console.log(`[HTTP] 收到客户端请求: model=${resolvedModelId} "${text.substring(0, 15)}..."`);
         const timeout = setTimeout(() => {
           if (pendingRequests.has(requestId)) {
             pendingRequests.delete(requestId);
@@ -130,8 +157,15 @@ const httpServer = http.createServer(async (req, res) => {
           }
         }, 180000);
 
-        pendingRequests.set(requestId, { res, timeout });
-        extensionSocket.send(JSON.stringify({ action: 'ask_gemini', requestId, text }));
+        pendingRequests.set(requestId, { res, timeout, model: resolvedModelId });
+        extensionSocket.send(JSON.stringify({
+          action: 'ask_gemini',
+          requestId,
+          text,
+          model: resolvedModelId,
+          modeName: model ? model.name : null,
+          modeLabel: model ? model.short : null,
+        }));
 
       } catch (err) {
         res.writeHead(400);

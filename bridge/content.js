@@ -31,6 +31,80 @@ function getSendButton() {
   return document.querySelector('button[aria-label="发送"]') || document.querySelector('button[aria-label="Send"]');
 }
 
+function getModeButton() {
+  return document.querySelector('button[aria-label*="模式选择器"]');
+}
+
+/**
+ * 把网页端模式切换到指定模型。
+ * @param {string} modeName 菜单项里的完整后缀，如 “3.1 Pro”
+ * @param {string} [modeLabel] 按钮上显示的简称，如 “Pro”；省略时从 modeName 推导
+ */
+async function applyMode(modeName, modeLabel) {
+  if (!modeName) return;
+
+  // 页面按钮只显示去掉版本号的简称，例如菜单里是 “3.1 Pro”，按钮上是 “Pro”。
+  const display = modeLabel || modeName.replace(/^\d+(?:\.\d+)?\s+/, '');
+
+  const current = getModeButton();
+  if (!current) {
+    console.warn('[GeminiBridge] 页面上找不到模式选择器，保持当前模式');
+    return;
+  }
+
+  const label = current.getAttribute('aria-label') || '';
+  if (label.includes(display) || label.includes(modeName)) return;
+
+  const findItem = () => {
+    const items = [...document.querySelectorAll('[role="menuitemradio"]')];
+    return items.find((el) => el.innerText.includes(modeName)) || null;
+  };
+
+  // 菜单可能已经处于展开状态（例如上一次请求出错），此时不要再点一次把它关掉。
+  let item = findItem();
+  if (!item) {
+    current.click();
+    item = await waitFor(findItem, { timeout: 5000 }).catch(() => null);
+  }
+
+  if (!item) {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    throw new Error(`模式菜单里没有“${modeName}”`);
+  }
+
+  // 该项已经是选中状态时直接关闭菜单，避免重复点击后等不到任何变化。
+  const selected = item.getAttribute('aria-checked') === 'true' ||
+    item.textContent.includes('已选中') ||
+    item.textContent.toLowerCase().includes('check');
+  if (selected) {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return;
+  }
+
+  const locked = item.textContent.toLowerCase().includes('lock') ||
+    !!item.querySelector('[data-mat-icon-name="lock"], [aria-label="lock"], img[alt="lock"]');
+  if (locked) {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    throw new Error(`模型“${modeName}”需要更高订阅，当前账号未解锁`);
+  }
+
+  const beforeLabel = current.getAttribute('aria-label') || '';
+  item.click();
+
+  // 不同版本的前端按钮文案不同（“3.1 Pro” 可能显示成 “Pro”），
+  // 因此只要按钮标签发生变化，或出现全名/简称，都视为切换成功。
+  await waitFor(() => {
+    const btn = getModeButton();
+    if (!btn) return null;
+    const next = btn.getAttribute('aria-label') || '';
+    return (next !== beforeLabel || next.includes(display) || next.includes(modeName)) ? btn : null;
+  }, { timeout: 8000 }).catch(() => {
+    throw new Error(`切换到模型“${modeName}”失败`);
+  });
+
+  await sleep(200);
+}
+
 function getResponseElements() {
   return [...document.querySelectorAll('model-response-content')];
 }
@@ -114,8 +188,11 @@ async function waitForResponseDone(el, timeout = 180000) {
 /**
  * 核心执行入口
  * @param {string} text 发送的提示词
+ * @param {string} [modeName] 可选的模式名，先切换模式再发送
+ * @param {string} [modeLabel] 模式按钮上的简称
  */
-async function executePrompt(text) {
+async function executePrompt(text, modeName, modeLabel) {
+  await applyMode(modeName, modeLabel);
   const beforeCount = getResponseElements().length;
   await fillEditor(text);
   await clickSendWhenEnabled();
@@ -159,7 +236,7 @@ function injectFloatingUI() {
     <button class="fab" id="fab">AI</button>
     <div class="panel" id="panel">
       <div class="header" id="drag-header">
-        <span>Gemini Local Agent</span>
+        <span>Gemini Local Agent v1.1</span>
         <button class="close-btn" id="close-btn">✖</button>
       </div>
       <div class="content">
@@ -231,7 +308,7 @@ function injectFloatingUI() {
       statusEl.textContent = '收到外部请求，正在执行...';
       sendBtn.disabled = true; inputEl.disabled = true;
 
-      executePrompt(msg.text)
+      executePrompt(msg.text, msg.modeName, msg.modeLabel)
         .then(result => {
           statusEl.textContent = '请求处理完成';
           replyEl.textContent = result; replyEl.classList.add('visible');
