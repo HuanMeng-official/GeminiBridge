@@ -6,6 +6,12 @@
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Gemini 网页输入框对单条消息有前端截断（约 4000 字），
+ * 超过这个长度的 prompt 必须拆成多条消息发送。
+ */
+const MAX_INPUT_CHARS = 3400;
+
+/**
  * 轮询等待条件成立
  * @param {Function} fn 目标条件检查函数
  * @param {Object} options 包含 interval 和 timeout 的配置
@@ -222,19 +228,113 @@ function insertViaPaste(editor, text) {
   }));
 }
 
-function insertLineByLine(text) {
-  const lines = text.split('\n');
-  lines.forEach((line, index) => {
-    if (index > 0) document.execCommand('insertLineBreak', false);
-    if (line) document.execCommand('insertText', false, line);
-  });
+function closeOverlays() {
+  document.dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'Escape',
+    code: 'Escape',
+    keyCode: 27,
+    which: 27,
+    bubbles: true,
+  }));
 }
 
-function promptLooksInserted(editor, text) {
-  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+async function insertLineByLine(text) {
+  const lines = text.split('\n');
+  for (let index = 0; index < lines.length; index++) {
+    const editor = getVisibleEditor();
+    if (!editor) return;
+
+    // 输入过程中可能被提及菜单等浮层抢走焦点，逐行重新聚焦。
+    if (document.activeElement !== editor) {
+      closeOverlays();
+      editor.focus();
+    }
+
+    if (index > 0) document.execCommand('insertLineBreak', false);
+    if (lines[index]) document.execCommand('insertText', false, lines[index]);
+
+    // “@” 会触发 Gemini 的提及菜单，插入后立刻关掉，避免影响后续内容。
+    if (lines[index].includes('@')) {
+      await sleep(10);
+      closeOverlays();
+      editor.focus();
+    }
+
+    if (index % 2 === 0) await sleep(8);
+  }
+}
+
+async function getStableEditor(timeout = 3000) {
+  const start = Date.now();
+  let last = null;
+  let since = 0;
+
+  while (Date.now() - start < timeout) {
+    const editor = getVisibleEditor();
+    if (editor) {
+      if (editor === last) {
+        if (Date.now() - since >= 300) return editor;
+      } else {
+        last = editor;
+        since = Date.now();
+      }
+    }
+    await sleep(100);
+  }
+
+  return getVisibleEditor();
+}
+
+function normalizeText(value) {
+  return (value || '').replace(/\s+/g, ' ').trim();
+}
+
+function insertionState(editor, text) {
   const content = editor.innerText || '';
-  if (lines.length === 0) return content.trim().length > 0;
-  return content.includes(lines[0]) && content.includes(lines[lines.length - 1]);
+  const normalized = normalizeText(content);
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  const first = normalizeText(lines[0] || '');
+  const last = normalizeText(lines[lines.length - 1] || '');
+  const firstOk = !first || normalized.includes(first);
+  const lastOk = !last || normalized.includes(last);
+
+  return {
+    ok: firstOk && lastOk,
+    firstOk,
+    lastOk,
+    expected: text.length,
+    actual: content.length,
+  };
+}
+
+async function waitForInsertion(editor, text, timeout = 3000) {
+  let state = insertionState(editor, text);
+  try {
+    await waitFor(() => {
+      state = insertionState(editor, text);
+      return state.ok ? true : null;
+    }, { timeout, interval: 100 });
+  } catch {
+    // 超时后返回最后一次测量结果，由调用方决定是否回退。
+  }
+  return state;
+}
+
+function insertionDetails(editor, text) {
+  const content = editor.innerText || '';
+  const position = content.length;
+  const tail = content.slice(-30).replace(/\n/g, '⏎');
+  const next = text.slice(position, position + 30).replace(/\n/g, '⏎');
+  const active = document.activeElement;
+  const focus = active === editor ? '编辑器' : (active ? active.tagName : '无');
+
+  return {
+    actual: content.length,
+    tail,
+    next,
+    focus,
+    connected: editor.isConnected,
+  };
 }
 
 /**
@@ -242,28 +342,79 @@ function promptLooksInserted(editor, text) {
  * @param {string} text 要填入的文本
  */
 async function fillEditor(text) {
-  const editor = getVisibleEditor();
+  let editor = await getStableEditor();
   if (!editor) throw new Error('找不到输入框');
 
   clearEditor(editor);
+  await sleep(50);
+  editor = getVisibleEditor() || editor;
 
   // execCommand('insertText') 遇到换行只会插入第一行；优先派发 paste 事件，
   // 让 Quill 按自己的剪贴板逻辑把多行文本解析成段落。
   insertViaPaste(editor, text);
-  await sleep(250);
 
-  if (!promptLooksInserted(editor, text)) {
+  const pasteState = await waitForInsertion(editor, text, 1200);
+  let finalState = pasteState;
+
+  if (!pasteState.ok) {
+    editor = getVisibleEditor() || editor;
     clearEditor(editor);
-    insertLineByLine(text);
-    await sleep(200);
+    await sleep(50);
+    await insertLineByLine(text);
+    editor = getVisibleEditor() || editor;
+    finalState = await waitForInsertion(editor, text, 5000);
   }
 
-  if (editor.classList.contains('ql-blank') || !editor.innerText.trim()) {
-    throw new Error('填充未生效');
+  if (!finalState.ok) {
+    const details = insertionDetails(editor, text);
+    throw new Error(
+      `文本注入不完整（期望 ${finalState.expected} 字，实际 ${finalState.actual} 字` +
+      `，首行${finalState.firstOk ? 'OK' : '缺失'}，末行${finalState.lastOk ? 'OK' : '缺失'}` +
+      `；粘贴后 ${pasteState.actual} 字；末尾=${details.tail}` +
+      `；后续=${details.next}；焦点=${details.focus}；连接=${details.connected}）`,
+    );
   }
-  if (!promptLooksInserted(editor, text)) {
-    throw new Error('文本注入不完整');
+}
+
+/**
+ * 把长 prompt 按行拆成多条消息，避免触发 Gemini 输入框的前端截断。
+ * @param {string} text
+ * @param {number} maxChars
+ * @returns {string[]}
+ */
+function splitPrompt(text, maxChars = MAX_INPUT_CHARS) {
+  if (text.length <= maxChars) return [text];
+
+  const chunks = [];
+  let buffer = '';
+
+  const flush = () => {
+    if (buffer) {
+      chunks.push(buffer);
+      buffer = '';
+    }
+  };
+
+  for (const line of text.split('\n')) {
+    const candidate = buffer ? `${buffer}\n${line}` : line;
+
+    if (candidate.length <= maxChars) {
+      buffer = candidate;
+      continue;
+    }
+
+    flush();
+
+    let rest = line;
+    while (rest.length > maxChars) {
+      chunks.push(rest.slice(0, maxChars));
+      rest = rest.slice(maxChars);
+    }
+    buffer = rest;
   }
+
+  flush();
+  return chunks;
 }
 
 /**
@@ -312,12 +463,26 @@ async function waitForResponseDone(el, timeout = 180000) {
 async function executePromptNow(text, modeName, modeLabel) {
   await startFreshTempChat();
   await applyMode(modeName, modeLabel);
-  const beforeCount = getResponseElements().length;
-  await fillEditor(text);
-  await clickSendWhenEnabled();
-  const respEl = await waitForNewResponse(beforeCount);
-  await waitForResponseDone(respEl);
-  const content = extractText(respEl);
+
+  const chunks = splitPrompt(text);
+  let content = '';
+
+  for (let index = 0; index < chunks.length; index++) {
+    const isLast = index === chunks.length - 1;
+    // 中间分段只投喂上下文，避免模型对半截内容长篇作答。
+    const piece = isLast
+      ? chunks[index]
+      : `【上下文分段 ${index + 1}/${chunks.length}，请只回复“继续”，不要回答或分析】\n\n${chunks[index]}`;
+
+    const beforeCount = getResponseElements().length;
+    await fillEditor(piece);
+    await clickSendWhenEnabled();
+    const respEl = await waitForNewResponse(beforeCount);
+    await waitForResponseDone(respEl);
+
+    if (isLast) content = extractText(respEl);
+  }
+
   if (!content) throw new Error('回复内容为空');
   return content;
 }
