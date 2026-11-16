@@ -109,6 +109,85 @@ function getResponseElements() {
   return [...document.querySelectorAll('model-response-content')];
 }
 
+function getTempChatButton() {
+  return document.querySelector('[data-test-id="temp-chat-button-container"] button') ||
+    [...document.querySelectorAll('button')]
+      .find((button) => /临时对话|temporary chat/i.test(button.getAttribute('aria-label') || '')) ||
+    null;
+}
+
+function isTempChatOn() {
+  const button = getTempChatButton();
+  const label = button ? (button.getAttribute('aria-label') || '') : '';
+  return /关闭临时对话|turn off temporary chat/i.test(label);
+}
+
+function getNewChatButton() {
+  const candidates = [...document.querySelectorAll('button, a, [role="button"]')];
+  const matches = candidates.filter((el) => {
+    const label = el.getAttribute('aria-label') || '';
+    const text = `${label} ${el.innerText || ''}`;
+    return /新对话|新建对话|new chat|new conversation/i.test(text) &&
+      !/临时|temporary/i.test(text);
+  });
+  // 优先侧边栏的“发起新对话”（href=/app），避免点到 logo（href=/）触发整页刷新。
+  return matches.find((el) => el.getAttribute('href') === '/app') || matches[0] || null;
+}
+
+function isFreshChat() {
+  return getResponseElements().length === 0 && !!getVisibleEditor();
+}
+
+/**
+ * 回到空白的新会话（不保证临时模式）。
+ */
+async function goHomeIfNeeded() {
+  if (isFreshChat()) return;
+  const newChat = getNewChatButton();
+  if (!newChat) return;
+  newChat.click();
+  await waitFor(isFreshChat, { timeout: 10000 }).catch(() => {});
+}
+
+/**
+ * 确保当前处于一个全新的临时对话。
+ * 找不到临时对话按钮、或无法产生空白会话时抛出明确错误，绝不退回到旧对话发送。
+ */
+async function startFreshTempChat() {
+  // 普通对话页可能没有临时对话按钮，先回首页。
+  await goHomeIfNeeded();
+
+  const tempButton = await waitFor(getTempChatButton, { timeout: 10000 }).catch(() => null);
+  if (!tempButton) throw new Error('找不到临时对话按钮');
+
+  if (!isTempChatOn()) {
+    tempButton.click();
+    await waitFor(isTempChatOn, { timeout: 8000 }).catch(() => {
+      throw new Error('无法开启临时对话');
+    });
+  }
+
+  // 临时模式可能要求从空白会话开始；仍在旧会话里就再点一次“新对话”。
+  await goHomeIfNeeded();
+
+  // 兜底：关掉临时对话再打开，强制产生新的临时会话。
+  if (!isFreshChat()) {
+    const off = getTempChatButton();
+    if (off && isTempChatOn()) {
+      off.click();
+      await waitFor(() => !isTempChatOn(), { timeout: 8000 }).catch(() => {});
+    }
+    const on = getTempChatButton();
+    if (on && !isTempChatOn()) {
+      on.click();
+      await waitFor(isTempChatOn, { timeout: 8000 }).catch(() => {});
+    }
+    await waitFor(isFreshChat, { timeout: 10000 }).catch(() => {});
+  }
+
+  if (!isFreshChat()) throw new Error('无法创建新的临时对话');
+}
+
 function getMarkdown(el) {
   return el.querySelector('div.markdown.markdown-main-panel');
 }
@@ -123,14 +202,7 @@ function extractText(el) {
   return md ? md.innerText.trim() : '';
 }
 
-/**
- * 填充文本到 Quill 编辑器，模拟真实按键输入
- * @param {string} text 要填入的文本
- */
-async function fillEditor(text) {
-  const editor = getVisibleEditor();
-  if (!editor) throw new Error('找不到输入框');
-
+function clearEditor(editor) {
   editor.focus();
   const sel = window.getSelection();
   const range = document.createRange();
@@ -138,13 +210,59 @@ async function fillEditor(text) {
   sel.removeAllRanges();
   sel.addRange(range);
   document.execCommand('delete', false);
+}
 
-  const ok = document.execCommand('insertText', false, text);
-  if (!ok) throw new Error('文本注入失败');
+function insertViaPaste(editor, text) {
+  const data = new DataTransfer();
+  data.setData('text/plain', text);
+  editor.dispatchEvent(new ClipboardEvent('paste', {
+    clipboardData: data,
+    bubbles: true,
+    cancelable: true,
+  }));
+}
 
-  await sleep(150);
+function insertLineByLine(text) {
+  const lines = text.split('\n');
+  lines.forEach((line, index) => {
+    if (index > 0) document.execCommand('insertLineBreak', false);
+    if (line) document.execCommand('insertText', false, line);
+  });
+}
+
+function promptLooksInserted(editor, text) {
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  const content = editor.innerText || '';
+  if (lines.length === 0) return content.trim().length > 0;
+  return content.includes(lines[0]) && content.includes(lines[lines.length - 1]);
+}
+
+/**
+ * 填充文本到 Quill 编辑器
+ * @param {string} text 要填入的文本
+ */
+async function fillEditor(text) {
+  const editor = getVisibleEditor();
+  if (!editor) throw new Error('找不到输入框');
+
+  clearEditor(editor);
+
+  // execCommand('insertText') 遇到换行只会插入第一行；优先派发 paste 事件，
+  // 让 Quill 按自己的剪贴板逻辑把多行文本解析成段落。
+  insertViaPaste(editor, text);
+  await sleep(250);
+
+  if (!promptLooksInserted(editor, text)) {
+    clearEditor(editor);
+    insertLineByLine(text);
+    await sleep(200);
+  }
+
   if (editor.classList.contains('ql-blank') || !editor.innerText.trim()) {
     throw new Error('填充未生效');
+  }
+  if (!promptLooksInserted(editor, text)) {
+    throw new Error('文本注入不完整');
   }
 }
 
@@ -191,7 +309,8 @@ async function waitForResponseDone(el, timeout = 180000) {
  * @param {string} [modeName] 可选的模式名，先切换模式再发送
  * @param {string} [modeLabel] 模式按钮上的简称
  */
-async function executePrompt(text, modeName, modeLabel) {
+async function executePromptNow(text, modeName, modeLabel) {
+  await startFreshTempChat();
   await applyMode(modeName, modeLabel);
   const beforeCount = getResponseElements().length;
   await fillEditor(text);
@@ -201,6 +320,15 @@ async function executePrompt(text, modeName, modeLabel) {
   const content = extractText(respEl);
   if (!content) throw new Error('回复内容为空');
   return content;
+}
+
+// 所有请求串行执行，避免多个客户端同时抢占输入框。
+let executionQueue = Promise.resolve();
+
+function executePrompt(text, modeName, modeLabel) {
+  const run = executionQueue.then(() => executePromptNow(text, modeName, modeLabel));
+  executionQueue = run.catch(() => {});
+  return run;
 }
 
 /**
@@ -236,7 +364,7 @@ function injectFloatingUI() {
     <button class="fab" id="fab">AI</button>
     <div class="panel" id="panel">
       <div class="header" id="drag-header">
-        <span>Gemini Local Agent v1.1</span>
+        <span>Gemini Bridge</span>
         <button class="close-btn" id="close-btn">✖</button>
       </div>
       <div class="content">

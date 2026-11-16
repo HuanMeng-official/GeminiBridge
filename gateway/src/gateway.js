@@ -4,6 +4,7 @@
  */
 const http = require('http');
 const WebSocket = require('ws');
+const { buildPrompt } = require('./prompt');
 
 const WS_PORT = 8765;
 const HTTP_PORT = 12306;
@@ -126,15 +127,12 @@ const httpServer = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const data = JSON.parse(body);
-        const messages = data.messages || [];
-        const lastUserMsg = messages.filter(m => m.role === 'user').pop();
-        
-        if (!lastUserMsg || !lastUserMsg.content) {
-          throw new Error('未找到有效的用户消息');
-        }
+        const messages = Array.isArray(data.messages) ? data.messages : null;
+        if (!messages) throw new Error('messages 必须是数组');
 
-        const text = lastUserMsg.content;
-        const requestId = `req-${Date.now()}`;
+        // system/developer 与多轮历史在这里序列化成一段完整 prompt。
+        const text = buildPrompt(messages);
+        const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
         // 客户端传了页面里存在的模型 id 就切换模式；其余情况沿用页面当前模式。
         const requestedModel = typeof data.model === 'string' ? data.model.trim() : '';
@@ -148,14 +146,14 @@ const httpServer = http.createServer(async (req, res) => {
           }
         }
 
-        console.log(`[HTTP] 收到客户端请求: model=${resolvedModelId} "${text.substring(0, 15)}..."`);
+        console.log(`[HTTP] 收到客户端请求: model=${resolvedModelId} prompt=${text.length} 字`);
         const timeout = setTimeout(() => {
           if (pendingRequests.has(requestId)) {
             pendingRequests.delete(requestId);
             res.writeHead(504);
             res.end(JSON.stringify({ error: { message: '生成超时' } }));
           }
-        }, 180000);
+        }, 300000);
 
         pendingRequests.set(requestId, { res, timeout, model: resolvedModelId });
         extensionSocket.send(JSON.stringify({

@@ -5,7 +5,7 @@
   "license": "MIT",
   "author": "HuanMeng-official",
   "type": "commonjs",
-  "main": "gateway.js",
+  "main": "src/gateway.js",
   "scripts": {
     "start": "node gateway.js"
   },

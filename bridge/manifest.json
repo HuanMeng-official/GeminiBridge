@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Gemini Bridge",
-  "version": "1.1.0",
+  "version": "1.0.0",
   "minimum_chrome_version": "116",
   "description": "Gemini 消息转发",
   "permissions": [
