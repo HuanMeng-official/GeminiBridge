@@ -1,0 +1,15 @@
+{
+  "name": "gateway",
+  "version": "1.0.0",
+  "description": "",
+  "license": "MIT",
+  "author": "HuanMeng-official",
+  "type": "commonjs",
+  "main": "gateway.js",
+  "scripts": {
+    "start": "node gateway.js"
+  },
+  "dependencies": {
+    "ws": "^8.23.0"
+  }
+}

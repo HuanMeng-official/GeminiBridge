@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Gemini Bridge",
+  "version": "1.0.0",
+  "minimum_chrome_version": "116",
+  "description": "Gemini 消息转发",
+  "permissions": [
+    "alarms",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://gemini.google.com/*"
+  ],
+  "action": {
+    "default_title": "请前往 Gemini 页面查看悬浮窗"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://gemini.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
