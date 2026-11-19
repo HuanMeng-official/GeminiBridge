@@ -43,13 +43,13 @@ function getModeButton() {
 
 /**
  * 把网页端模式切换到指定模型。
- * @param {string} modeName 菜单项里的完整后缀，如 “3.1 Pro”
- * @param {string} [modeLabel] 按钮上显示的简称，如 “Pro”；省略时从 modeName 推导
+ * @param {string} modeName 菜单项里的完整后缀
+ * @param {string} [modeLabel] 按钮上显示的简称；省略时从 modeName 推导
  */
 async function applyMode(modeName, modeLabel) {
   if (!modeName) return;
 
-  // 页面按钮只显示去掉版本号的简称，例如菜单里是 “3.1 Pro”，按钮上是 “Pro”。
+  // 页面按钮可能只显示去掉版本号的简称，因此按全名或简称匹配都算切换成功。
   const display = modeLabel || modeName.replace(/^\d+(?:\.\d+)?\s+/, '');
 
   const current = getModeButton();
@@ -97,8 +97,8 @@ async function applyMode(modeName, modeLabel) {
   const beforeLabel = current.getAttribute('aria-label') || '';
   item.click();
 
-  // 不同版本的前端按钮文案不同（“3.1 Pro” 可能显示成 “Pro”），
-  // 因此只要按钮标签发生变化，或出现全名/简称，都视为切换成功。
+  // 不同版本的前端按钮文案可能不同，只要按钮标签发生变化，
+  // 或出现全名/简称，都视为切换成功。
   await waitFor(() => {
     const btn = getModeButton();
     if (!btn) return null;

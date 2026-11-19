@@ -13,21 +13,17 @@ const pendingRequests = new Map();
 /**
  * 与 Gemini 网页端「模式选择器」一一对应的模型清单。
  * 页面实际显示（2026-11 抓取）：
- *   快速解答 → 3.5 Flash-Lite
  *   日常帮助 → 4 Hydrogen
- *   深度研究 → 3.1 Pro
- *   代码与分析 → 4 Argon
- *   高难任务 → 4 Carbon（带锁，需要更高订阅）
+ *   更深入的分析 → 4 Neon
+ *   代码和复杂工作 → 4 Carbon（带锁，需要更高订阅）
  *
- * name 是菜单项里的完整后缀，short 是选中后按钮上显示的简称（去掉了版本号，
- * 例如 “3.1 Pro” 在按钮上显示为 “Pro”），用于切换后的校验。
+ * name 是菜单项里的完整后缀，short 是选中后按钮上显示的简称（可能去掉版本号），
+ * 用于切换后的校验。
  */
 const MODELS = [
-  { id: 'gemini-3.5-flash-lite', name: '3.5 Flash-Lite', short: 'Flash-Lite', label: '快速解答' },
   { id: 'gemini-4-hydrogen', name: 'Hydrogen', short: 'Hydrogen', label: '日常帮助' },
-  { id: 'gemini-3.1-pro', name: '3.1 Pro', short: 'Pro', label: '深度研究' },
-  { id: 'gemini-4-argon', name: 'Argon', short: 'Argon', label: '代码与分析' },
-  { id: 'gemini-4-carbon', name: 'Carbon', short: 'Carbon', label: '高难任务' },
+  { id: 'gemini-4-neon', name: 'Neon', short: 'Neon', label: '更深入的分析' },
+  { id: 'gemini-4-carbon', name: 'Carbon', short: 'Carbon', label: '代码和复杂工作' },
 ];
 const MODEL_BY_ID = new Map(MODELS.map((m) => [m.id, m]));
 

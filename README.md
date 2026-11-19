@@ -135,11 +135,9 @@ print(resp.choices[0].message.content)
 
 | `model` | 页面模式 | 页面模型 |
 | --- | --- | --- |
-| `gemini-3.5-flash-lite` | 快速解答 | 3.5 Flash-Lite |
 | `gemini-4-hydrogen` | 日常帮助 | 4 Hydrogen |
-| `gemini-3.1-pro` | 深度研究 | 3.1 Pro |
-| `gemini-4-argon` | 代码与分析 | 4 Argon |
-| `gemini-4-carbon` | 高难任务 | 4 Carbon |
+| `gemini-4-neon` | 更深入的分析 | 4 Neon |
+| `gemini-4-carbon` | 代码和复杂工作 | 4 Carbon |
 
 - 传入上表中的 `model`：发送前会先把页面切到对应模式。
 - 省略 `model`：沿用页面当前模式。
@@ -153,7 +151,7 @@ print(resp.choices[0].message.content)
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `GET` | `/v1/models` | 返回 5 个模型 |
+| `GET` | `/v1/models` | 返回 3 个模型 |
 | `POST` | `/v1/chat/completions` | 非流式对话补全 |
 
 ### messages 规则
