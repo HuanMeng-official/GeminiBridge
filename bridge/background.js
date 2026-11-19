@@ -153,4 +153,13 @@ chrome.tabs.onActivated.addListener(() => {
   }
 });
 
+/**
+ * Content script 查询网关连接状态，用于悬浮面板上的状态指示
+ */
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message && message.type === 'BRIDGE_STATUS') {
+    sendResponse({ connected: !!ws && ws.readyState === WebSocket.OPEN });
+  }
+});
+
 connectWebSocket();

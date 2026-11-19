@@ -510,114 +510,594 @@ function injectFloatingUI() {
   const shadow = host.attachShadow({ mode: 'open' });
   shadow.innerHTML = `
     <style>
-      .panel { position: fixed; bottom: 100px; right: 40px; width: 320px; background: #fff; border: 1px solid #dadce0; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.1); font-family: system-ui, sans-serif; display: flex; flex-direction: column; transition: 0.2s; }
-      .panel.hidden { opacity: 0; pointer-events: none; transform: translateY(20px); }
-      .header { padding: 10px 14px; background: #f8f9fa; font-weight: 600; cursor: move; display: flex; justify-content: space-between; border-bottom: 1px solid #dadce0; color: #3c4043; user-select: none; border-radius: 12px 12px 0 0; }
-      .close-btn { background: none; border: none; cursor: pointer; color: #5f6368; font-size: 16px; }
-      .content { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-      textarea { width: 100%; height: 70px; resize: none; padding: 8px; border: 1px solid #dadce0; border-radius: 6px; font-family: inherit; }
-      textarea:focus { outline: none; border-color: #1a73e8; }
-      .btn-row { display: flex; justify-content: flex-end; }
-      button.send-btn { background: #1a73e8; color: #fff; border: none; padding: 6px 16px; border-radius: 6px; cursor: pointer; }
-      button.send-btn:disabled { background: #9aa0a6; cursor: not-allowed; }
-      .status { font-size: 12px; color: #5f6368; min-height: 16px; }
-      .reply-box { max-height: 200px; overflow-y: auto; background: #f8f9fa; border: 1px solid #dadce0; padding: 8px; border-radius: 6px; font-size: 13px; white-space: pre-wrap; display: none; }
-      .reply-box.visible { display: block; }
-      .fab { position: fixed; bottom: 100px; right: 40px; width: 48px; height: 48px; border-radius: 50%; background: #1a73e8; color: #fff; display: none; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.2); border: none; font-weight: bold; }
-      .fab.visible { display: flex; }
+      .panel, .fab {
+        --gb-font: "Google Sans", "Roboto", "Segoe UI", system-ui, -apple-system, sans-serif;
+        --gb-surface: #ffffff;
+        --gb-surface-muted: #f6f8fb;
+        --gb-surface-inset: #eef2f7;
+        --gb-text: #1f1f1f;
+        --gb-text-2: #5f6368;
+        --gb-text-3: #80868b;
+        --gb-border: rgba(60, 64, 67, 0.12);
+        --gb-border-strong: rgba(60, 64, 67, 0.2);
+        --gb-accent: #1a73e8;
+        --gb-accent-hover: #1765cc;
+        --gb-accent-soft: rgba(26, 115, 232, 0.1);
+        --gb-on-accent: #ffffff;
+        --gb-success: #188038;
+        --gb-danger: #d93025;
+        --gb-ring: rgba(26, 115, 232, 0.3);
+        --gb-shadow: 0 0 0 1px rgba(60, 64, 67, 0.06), 0 12px 32px rgba(60, 64, 67, 0.18), 0 2px 8px rgba(60, 64, 67, 0.08);
+        --gb-fab-shadow: 0 0 0 1px rgba(60, 64, 67, 0.06), 0 6px 18px rgba(60, 64, 67, 0.16);
+        box-sizing: border-box;
+        font-family: var(--gb-font);
+        color: var(--gb-text);
+      }
+      .panel[data-theme="dark"], .fab[data-theme="dark"] {
+        --gb-surface: #1e1f20;
+        --gb-surface-muted: #26282a;
+        --gb-surface-inset: #2b2d2f;
+        --gb-text: #e8eaed;
+        --gb-text-2: #a8abaf;
+        --gb-text-3: #8e9297;
+        --gb-border: rgba(255, 255, 255, 0.1);
+        --gb-border-strong: rgba(255, 255, 255, 0.18);
+        --gb-accent: #8ab4f8;
+        --gb-accent-hover: #aecbfa;
+        --gb-accent-soft: rgba(138, 180, 248, 0.14);
+        --gb-on-accent: #062e6f;
+        --gb-success: #81c995;
+        --gb-danger: #f28b82;
+        --gb-ring: rgba(138, 180, 248, 0.35);
+        --gb-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 18px 44px rgba(0, 0, 0, 0.55);
+        --gb-fab-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1), 0 8px 22px rgba(0, 0, 0, 0.45);
+      }
+      .panel {
+        position: fixed;
+        right: 32px;
+        bottom: 96px;
+        width: 360px;
+        max-width: calc(100vw - 24px);
+        background: var(--gb-surface);
+        border-radius: 18px;
+        box-shadow: var(--gb-shadow);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        visibility: visible;
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        transform-origin: bottom right;
+        transition: opacity 180ms cubic-bezier(0.23, 1, 0.32, 1), transform 180ms cubic-bezier(0.23, 1, 0.32, 1), visibility 0s;
+        z-index: 2147483647;
+      }
+      .panel.hidden {
+        visibility: hidden;
+        opacity: 0;
+        transform: translateY(8px) scale(0.98);
+        pointer-events: none;
+        transition: opacity 140ms cubic-bezier(0.23, 1, 0.32, 1), transform 140ms cubic-bezier(0.23, 1, 0.32, 1), visibility 0s linear 140ms;
+      }
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 11px 12px 11px 14px;
+        background: var(--gb-surface);
+        border-bottom: 1px solid var(--gb-border);
+        cursor: grab;
+        user-select: none;
+      }
+      .panel.dragging .header { cursor: grabbing; }
+      .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      .brand-icon {
+        width: 30px;
+        height: 30px;
+        border-radius: 9px;
+        background: var(--gb-accent-soft);
+        color: var(--gb-accent);
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+      }
+      .brand-icon svg { width: 18px; height: 18px; display: block; }
+      .brand-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+      .brand-title { font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; }
+      .brand-sub { font-size: 11px; font-weight: 500; color: var(--gb-text-3); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .header-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+      .conn-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: var(--gb-surface-muted);
+        border: 1px solid var(--gb-border);
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--gb-text-2);
+        white-space: nowrap;
+      }
+      .conn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gb-text-3); flex: 0 0 auto; }
+      .conn-pill[data-state="online"] .conn-dot { background: var(--gb-success); }
+      .conn-pill[data-state="offline"] .conn-dot { background: var(--gb-danger); }
+      .icon-btn {
+        position: relative;
+        width: 32px;
+        height: 32px;
+        border: 0;
+        border-radius: 9px;
+        background: transparent;
+        color: var(--gb-text-2);
+        display: grid;
+        place-items: center;
+        cursor: pointer;
+        transition: background 120ms ease, color 120ms ease, transform 120ms ease;
+      }
+      .icon-btn::after { content: ""; position: absolute; inset: -4px; }
+      .icon-btn:hover { background: var(--gb-surface-muted); color: var(--gb-text); }
+      .icon-btn:active { transform: scale(0.96); }
+      .icon-btn svg { width: 18px; height: 18px; }
+      .body { padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+      textarea {
+        width: 100%;
+        min-height: 84px;
+        max-height: 180px;
+        resize: none;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid transparent;
+        background: var(--gb-surface-inset);
+        color: var(--gb-text);
+        font-family: var(--gb-font);
+        font-size: 13px;
+        line-height: 1.55;
+        outline: none;
+        transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+        scrollbar-width: thin;
+        scrollbar-color: var(--gb-border-strong) transparent;
+      }
+      textarea::placeholder { color: var(--gb-text-3); }
+      textarea:focus { border-color: var(--gb-accent); box-shadow: 0 0 0 3px var(--gb-ring); background: var(--gb-surface); }
+      textarea:disabled { opacity: 0.65; cursor: not-allowed; }
+      .meta { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 0 2px; font-size: 11px; color: var(--gb-text-3); }
+      .meta .count { font-variant-numeric: tabular-nums; }
+      .meta .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .send-btn {
+        height: 40px;
+        width: 100%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 0;
+        border-radius: 12px;
+        background: var(--gb-accent);
+        color: var(--gb-on-accent);
+        font-family: var(--gb-font);
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 120ms ease, transform 120ms ease, opacity 120ms ease;
+      }
+      .send-btn svg { width: 16px; height: 16px; }
+      .send-btn:hover:not(:disabled) { background: var(--gb-accent-hover); }
+      .send-btn:active:not(:disabled) { transform: scale(0.98); }
+      .send-btn:disabled { background: var(--gb-surface-inset); color: var(--gb-text-3); cursor: not-allowed; opacity: 0.85; }
+      .status {
+        min-height: 16px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 11.5px;
+        color: var(--gb-text-3);
+        padding: 1px 2px;
+      }
+      .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gb-text-3); flex: 0 0 auto; }
+      .status[data-tone="success"] .status-dot { background: var(--gb-success); }
+      .status[data-tone="error"] .status-dot { background: var(--gb-danger); }
+      .status[data-tone="error"] { color: var(--gb-danger); }
+      .status[data-tone="busy"] { color: var(--gb-text-2); }
+      .status[data-tone="busy"] .status-dot { display: none; }
+      .status-spinner {
+        display: none;
+        width: 12px;
+        height: 12px;
+        flex: 0 0 auto;
+        border: 2px solid var(--gb-border-strong);
+        border-top-color: var(--gb-accent);
+        border-radius: 50%;
+        animation: gb-spin 0.8s linear infinite;
+      }
+      .status[data-tone="busy"] .status-spinner { display: inline-block; }
+      @keyframes gb-spin { to { transform: rotate(360deg); } }
+      .reply {
+        display: none;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 2px;
+        padding: 10px 12px;
+        background: var(--gb-surface-muted);
+        border: 1px solid var(--gb-border);
+        border-radius: 12px;
+      }
+      .reply.visible { display: flex; }
+      .reply-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 600; color: var(--gb-text-3); letter-spacing: 0.02em; }
+      .copy-btn {
+        border: 0;
+        background: transparent;
+        color: var(--gb-text-2);
+        font-family: var(--gb-font);
+        font-size: 11px;
+        font-weight: 500;
+        padding: 3px 6px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .copy-btn:hover { background: var(--gb-surface-inset); color: var(--gb-text); }
+      .reply-body {
+        max-height: 220px;
+        overflow-y: auto;
+        font-size: 12.5px;
+        line-height: 1.6;
+        color: var(--gb-text);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        text-wrap: pretty;
+        scrollbar-width: thin;
+        scrollbar-color: var(--gb-border-strong) transparent;
+      }
+      .fab {
+        position: fixed;
+        right: 32px;
+        bottom: 96px;
+        width: 52px;
+        height: 52px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--gb-surface);
+        color: var(--gb-accent);
+        border: 0;
+        box-shadow: var(--gb-fab-shadow);
+        cursor: pointer;
+        visibility: hidden;
+        opacity: 0;
+        pointer-events: none;
+        transform: scale(0.94);
+        transition: opacity 140ms cubic-bezier(0.23, 1, 0.32, 1), transform 140ms cubic-bezier(0.23, 1, 0.32, 1), visibility 0s linear 140ms;
+        z-index: 2147483647;
+      }
+      .fab.visible {
+        visibility: visible;
+        opacity: 1;
+        pointer-events: auto;
+        transform: scale(1);
+        transition: opacity 140ms cubic-bezier(0.23, 1, 0.32, 1), transform 140ms cubic-bezier(0.23, 1, 0.32, 1), visibility 0s;
+      }
+      .fab:hover { transform: scale(1.04); }
+      .fab:active { transform: scale(0.96); }
+      .fab svg { width: 22px; height: 22px; }
+      .fab-dot {
+        position: absolute;
+        top: 6px;
+        right: 6px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--gb-text-3);
+        border: 2px solid var(--gb-surface);
+        box-sizing: content-box;
+      }
+      .fab-dot[data-state="online"] { background: var(--gb-success); }
+      .fab-dot[data-state="offline"] { background: var(--gb-danger); }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+        border: 0;
+      }
+      button:focus-visible, textarea:focus-visible { outline: 2px solid var(--gb-accent); outline-offset: 2px; }
+      textarea:focus-visible { outline: none; }
+      @media (prefers-reduced-motion: reduce) {
+        .panel, .panel.hidden, .fab, .fab.visible, .send-btn, .icon-btn { transition: none; }
+        .status-spinner { animation: none; }
+      }
     </style>
-    <button class="fab" id="fab">AI</button>
-    <div class="panel" id="panel">
-      <div class="header" id="drag-header">
-        <span>Gemini Bridge</span>
-        <button class="close-btn" id="close-btn">✖</button>
-      </div>
-      <div class="content">
-        <textarea id="input" placeholder="等待外部指令或手动输入..."></textarea>
-        <div class="btn-row"><button class="send-btn" id="send-btn">发送</button></div>
-        <div class="status" id="status"></div>
-        <div class="reply-box" id="reply"></div>
+    <button class="fab" id="fab" type="button" aria-label="打开 Gemini Bridge 面板">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 15.5h16"/>
+        <path d="M6.5 15.5V9a5.5 5.5 0 0 1 11 0v6.5"/>
+        <circle cx="6.5" cy="18" r="1.6" fill="currentColor" stroke="none"/>
+        <circle cx="17.5" cy="18" r="1.6" fill="currentColor" stroke="none"/>
+      </svg>
+      <span class="fab-dot" id="fab-dot" data-state="offline"></span>
+    </button>
+    <div class="panel" id="panel" role="region" aria-label="Gemini Bridge 控制台">
+      <header class="header" id="drag-header">
+        <div class="brand">
+          <span class="brand-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 15.5h16"/>
+              <path d="M6.5 15.5V9a5.5 5.5 0 0 1 11 0v6.5"/>
+              <circle cx="6.5" cy="18" r="1.6" fill="currentColor" stroke="none"/>
+              <circle cx="17.5" cy="18" r="1.6" fill="currentColor" stroke="none"/>
+            </svg>
+          </span>
+          <span class="brand-text">
+            <span class="brand-title">Gemini Bridge</span>
+            <span class="brand-sub">本地网关控制台</span>
+          </span>
+        </div>
+        <div class="header-actions">
+          <span class="conn-pill" id="conn-pill" data-state="offline" title="网关连接状态">
+            <span class="conn-dot" aria-hidden="true"></span>
+            <span id="conn-text">未连接</span>
+          </span>
+          <button class="icon-btn" id="close-btn" type="button" aria-label="收起面板">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <path d="M6 10l6 6 6-6"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+      <div class="body">
+        <label class="sr-only" for="input">指令</label>
+        <textarea id="input" rows="3" placeholder="输入指令，或等待外部请求…"></textarea>
+        <div class="meta">
+          <span class="count" id="char-count">0 字</span>
+          <span class="hint">Ctrl / ⌘ + Enter 发送</span>
+        </div>
+        <button class="send-btn" id="send-btn" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12h14M13 6l6 6-6 6"/>
+          </svg>
+          <span>发送</span>
+        </button>
+        <div class="status" id="status" data-tone="muted" aria-live="polite">
+          <span class="status-spinner" aria-hidden="true"></span>
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="status-text">等待指令</span>
+        </div>
+        <section class="reply" id="reply-card" aria-label="最近回复">
+          <div class="reply-head">
+            <span>最近回复</span>
+            <button class="copy-btn" id="copy-btn" type="button">复制</button>
+          </div>
+          <div class="reply-body" id="reply"></div>
+        </section>
       </div>
     </div>
   `;
 
   const panel = shadow.getElementById('panel');
   const fab = shadow.getElementById('fab');
+  const fabDot = shadow.getElementById('fab-dot');
   const inputEl = shadow.getElementById('input');
   const sendBtn = shadow.getElementById('send-btn');
   const statusEl = shadow.getElementById('status');
+  const statusText = shadow.getElementById('status-text');
+  const replyCard = shadow.getElementById('reply-card');
   const replyEl = shadow.getElementById('reply');
+  const copyBtn = shadow.getElementById('copy-btn');
   const header = shadow.getElementById('drag-header');
+  const connPill = shadow.getElementById('conn-pill');
+  const connText = shadow.getElementById('conn-text');
+  const charCount = shadow.getElementById('char-count');
+  const closeBtn = shadow.getElementById('close-btn');
 
-  shadow.getElementById('close-btn').addEventListener('click', () => {
-    panel.classList.add('hidden'); fab.classList.add('visible');
-  });
-  
+  let activeRequests = 0;
+
+  function updateCharCount() {
+    charCount.textContent = `${inputEl.value.length} 字`;
+  }
+
+  function setStatus(text, tone = 'muted') {
+    statusText.textContent = text;
+    statusEl.dataset.tone = tone;
+  }
+
+  function setBusy(busy) {
+    activeRequests = Math.max(0, activeRequests + (busy ? 1 : -1));
+    const isBusy = activeRequests > 0;
+    sendBtn.disabled = isBusy;
+    inputEl.disabled = isBusy;
+    sendBtn.querySelector('span').textContent = isBusy ? '执行中…' : '发送';
+    panel.classList.toggle('busy', isBusy);
+  }
+
+  function showReply(text) {
+    replyEl.textContent = text;
+    replyCard.classList.add('visible');
+    replyEl.scrollTop = 0;
+  }
+
+  function hideReply() {
+    replyCard.classList.remove('visible');
+    replyEl.textContent = '';
+  }
+
+  function openPanel() {
+    panel.classList.remove('hidden');
+    fab.classList.remove('visible');
+  }
+
+  function closePanel() {
+    panel.classList.add('hidden');
+    fab.classList.add('visible');
+  }
+
+  function setConnection(connected) {
+    const state = connected ? 'online' : 'offline';
+    connPill.dataset.state = state;
+    fabDot.dataset.state = state;
+    connText.textContent = connected ? '已连接' : '未连接';
+  }
+
+  function refreshConnection() {
+    try {
+      chrome.runtime.sendMessage({ type: 'BRIDGE_STATUS' }, (res) => {
+        if (chrome.runtime.lastError) {
+          setConnection(false);
+          return;
+        }
+        setConnection(Boolean(res && res.connected));
+      });
+    } catch {
+      setConnection(false);
+    }
+  }
+
+  function detectPageTheme() {
+    for (const node of [document.body, document.documentElement]) {
+      if (!node) continue;
+      const match = getComputedStyle(node).backgroundColor.match(/rgba?\(([^)]+)\)/);
+      if (!match) continue;
+      const [r, g, b, a = 1] = match[1].split(',').map((value) => parseFloat(value));
+      if (a === 0) continue;
+      const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      return luminance < 0.45 ? 'dark' : 'light';
+    }
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+
+  function applyTheme() {
+    const theme = detectPageTheme();
+    panel.dataset.theme = theme;
+    fab.dataset.theme = theme;
+  }
+
+  closeBtn.addEventListener('click', closePanel);
+
   fab.addEventListener('click', () => {
-    fab.classList.remove('visible'); panel.classList.remove('hidden');
+    openPanel();
+    refreshConnection();
+  });
+
+  inputEl.addEventListener('input', updateCharCount);
+
+  inputEl.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      sendBtn.click();
+    }
+  });
+
+  panel.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !event.isComposing) closePanel();
+  });
+
+  copyBtn.addEventListener('click', async () => {
+    const text = replyEl.innerText;
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand('copy');
+      area.remove();
+    }
+    copyBtn.textContent = '已复制';
+    setTimeout(() => { copyBtn.textContent = '复制'; }, 1200);
   });
 
   sendBtn.addEventListener('click', async () => {
     const text = inputEl.value.trim();
     if (!text || sendBtn.disabled) return;
 
-    replyEl.classList.remove('visible');
-    statusEl.textContent = '正在执行...';
-    sendBtn.disabled = true; inputEl.disabled = true;
+    hideReply();
+    setStatus('正在执行…', 'busy');
+    setBusy(true);
 
     try {
       const result = await executePrompt(text);
-      statusEl.textContent = '完成';
-      replyEl.textContent = result;
-      replyEl.classList.add('visible');
-    } catch (e) {
-      statusEl.textContent = `失败: ${e.message}`;
+      setStatus('完成', 'success');
+      showReply(result);
+      refreshConnection();
+    } catch (error) {
+      setStatus(`失败：${error.message}`, 'error');
     } finally {
-      sendBtn.disabled = false; inputEl.disabled = false;
+      setBusy(false);
     }
   });
 
   let isDragging = false, startX, startY, startLeft, startTop;
-  header.addEventListener('mousedown', (e) => {
-    isDragging = true; startX = e.clientX; startY = e.clientY;
-    const rect = panel.getBoundingClientRect(); startLeft = rect.left; startTop = rect.top;
-    e.preventDefault();
+  header.addEventListener('mousedown', (event) => {
+    if (event.target.closest('button')) return;
+    isDragging = true;
+    startX = event.clientX;
+    startY = event.clientY;
+    const rect = panel.getBoundingClientRect();
+    startLeft = rect.left;
+    startTop = rect.top;
+    panel.classList.add('dragging');
+    event.preventDefault();
   });
-  
-  document.addEventListener('mousemove', (e) => {
+
+  document.addEventListener('mousemove', (event) => {
     if (!isDragging) return;
-    const newLeft = Math.max(0, Math.min(startLeft + e.clientX - startX, window.innerWidth - panel.offsetWidth));
-    const newTop = Math.max(0, Math.min(startTop + e.clientY - startY, window.innerHeight - panel.offsetHeight));
-    panel.style.left = newLeft + 'px'; panel.style.top = newTop + 'px';
-    panel.style.bottom = 'auto'; panel.style.right = 'auto';
+    const newLeft = Math.max(0, Math.min(startLeft + event.clientX - startX, window.innerWidth - panel.offsetWidth));
+    const newTop = Math.max(0, Math.min(startTop + event.clientY - startY, window.innerHeight - panel.offsetHeight));
+    panel.style.left = newLeft + 'px';
+    panel.style.top = newTop + 'px';
+    panel.style.bottom = 'auto';
+    panel.style.right = 'auto';
   });
-  
-  document.addEventListener('mouseup', () => { isDragging = false; });
+
+  document.addEventListener('mouseup', () => {
+    if (!isDragging) return;
+    isDragging = false;
+    panel.classList.remove('dragging');
+  });
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg && msg.type === 'EXTERNAL_SEND') {
-      panel.classList.remove('hidden'); fab.classList.remove('visible');
+      openPanel();
       inputEl.value = msg.text;
-      statusEl.textContent = '收到外部请求，正在执行...';
-      sendBtn.disabled = true; inputEl.disabled = true;
+      updateCharCount();
+      hideReply();
+      setStatus('收到外部请求，正在执行…', 'busy');
+      setBusy(true);
+      setConnection(true);
 
       executePrompt(msg.text, msg.modeName, msg.modeLabel)
-        .then(result => {
-          statusEl.textContent = '请求处理完成';
-          replyEl.textContent = result; replyEl.classList.add('visible');
+        .then((result) => {
+          setStatus('请求完成', 'success');
+          showReply(result);
+          refreshConnection();
           sendResponse({ ok: true, content: result });
         })
-        .catch(err => {
-          statusEl.textContent = `请求处理失败: ${err.message}`;
+        .catch((err) => {
+          setStatus(`请求失败：${err.message}`, 'error');
           sendResponse({ ok: false, error: err.message });
         })
         .finally(() => {
-          sendBtn.disabled = false; inputEl.disabled = false;
+          setBusy(false);
         });
 
       return true;
     }
   });
+
+  updateCharCount();
+  applyTheme();
+  refreshConnection();
+  setInterval(applyTheme, 3000);
+  setInterval(refreshConnection, 4000);
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 }
 
 if (document.readyState === 'loading') {
