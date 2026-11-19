@@ -5,9 +5,10 @@
 const http = require('http');
 const WebSocket = require('ws');
 const { buildPrompt } = require('./prompt');
+const { normalizeTools, normalizeToolChoice, parseToolCalls } = require('./tools');
 
-const WS_PORT = 8765;
-const HTTP_PORT = 12306;
+const WS_PORT = Number(process.env.GATEWAY_WS_PORT) || 8765;
+const HTTP_PORT = Number(process.env.GATEWAY_HTTP_PORT) || 12306;
 const pendingRequests = new Map();
 
 /**
@@ -58,7 +59,28 @@ wss.on('connection', (ws) => {
             pending.res.writeHead(500, { 'Content-Type': 'application/json' });
             pending.res.end(JSON.stringify({ error: { message: error } }));
           } else {
-            console.log(`[HTTP] 请求 ${requestId} 成功 (${content.length} 字)`);
+            let parsed;
+            try {
+              parsed = parseToolCalls(content, {
+                tools: pending.tools,
+                toolChoice: pending.toolChoice,
+              });
+            } catch (parseError) {
+              console.error(`[HTTP] 请求 ${requestId} 工具解析失败: ${parseError.message}`);
+              pending.res.writeHead(502, { 'Content-Type': 'application/json' });
+              pending.res.end(JSON.stringify({ error: { message: parseError.message } }));
+              return;
+            }
+
+            console.log(
+              `[HTTP] 请求 ${requestId} 成功 (${String(content || '').length} 字, ${parsed.toolCalls.length} 个工具调用)`,
+            );
+
+            const message = { role: 'assistant', content: parsed.content };
+            if (parsed.toolCalls.length > 0) {
+              message.tool_calls = parsed.toolCalls;
+            }
+
             const responseBody = {
               id: `chatcmpl-${Date.now()}`,
               object: 'chat.completion',
@@ -66,8 +88,8 @@ wss.on('connection', (ws) => {
               model: pending.model,
               choices: [{
                 index: 0,
-                message: { role: 'assistant', content },
-                finish_reason: 'stop'
+                message,
+                finish_reason: parsed.toolCalls.length > 0 ? 'tool_calls' : 'stop'
               }],
               usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
             };
@@ -126,8 +148,11 @@ const httpServer = http.createServer(async (req, res) => {
         const messages = Array.isArray(data.messages) ? data.messages : null;
         if (!messages) throw new Error('messages 必须是数组');
 
-        // system/developer 与多轮历史在这里序列化成一段完整 prompt。
-        const text = buildPrompt(messages);
+        const tools = normalizeTools(data.tools);
+        const toolChoice = normalizeToolChoice(data.tool_choice, tools);
+
+        // system/developer、多轮历史和工具说明在这里序列化成一段完整 prompt。
+        const text = buildPrompt(messages, { tools, toolChoice });
         const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
         // 客户端传了页面里存在的模型 id 就切换模式；其余情况沿用页面当前模式。
@@ -146,12 +171,12 @@ const httpServer = http.createServer(async (req, res) => {
         const timeout = setTimeout(() => {
           if (pendingRequests.has(requestId)) {
             pendingRequests.delete(requestId);
-            res.writeHead(504);
+            res.writeHead(504, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: { message: '生成超时' } }));
           }
         }, 300000);
 
-        pendingRequests.set(requestId, { res, timeout, model: resolvedModelId });
+        pendingRequests.set(requestId, { res, timeout, model: resolvedModelId, tools, toolChoice });
         extensionSocket.send(JSON.stringify({
           action: 'ask_gemini',
           requestId,
@@ -162,7 +187,7 @@ const httpServer = http.createServer(async (req, res) => {
         }));
 
       } catch (err) {
-        res.writeHead(400);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: { message: err.message } }));
       }
     });

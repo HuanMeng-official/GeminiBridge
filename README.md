@@ -9,6 +9,7 @@
 - OpenAI 兼容的 `GET /v1/models` 和 `POST /v1/chat/completions`
 - 按 `model` 自动切换 Gemini 页面的模式选择器
 - 支持 `system` / `developer` 提示词和多轮 `user` / `assistant` 历史
+- 支持 OpenAI `tools` / `tool_choice` 的**模拟工具调用**（prompt 级，不支持流式）
 - 每个 API 请求都使用全新的 **临时对话**，不写入 Gemini 历史列表
 - 超长 prompt 自动分段发送（Gemini 输入框约 4000 字会截断）
 - 多个请求自动串行，避免同时抢占输入框
@@ -152,16 +153,17 @@ print(resp.choices[0].message.content)
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `GET` | `/v1/models` | 返回 3 个模型 |
-| `POST` | `/v1/chat/completions` | 非流式对话补全 |
+| `POST` | `/v1/chat/completions` | 非流式对话补全（含模拟工具调用） |
 
 ### messages 规则
 
-- 支持的角色：`system`、`developer`、`user`、`assistant`
-- **最后一条消息必须是 `user`**
+- 支持的角色：`system`、`developer`、`user`、`assistant`、`tool`
+- **最后一条消息必须是 `user`，或工具回传时的 `tool`**
 - 只支持文本：`content` 为字符串，或 `[{ "type": "text", "text": "..." }]`
-- 图片、音频、`tool` / `function` 消息会返回 400
+- 支持 `assistant.tool_calls` 和 `role: "tool"` 的工具结果回传
+- 图片、音频会返回 400；不支持 `function` 角色
 - 整个 prompt 上限 **60000 字符**
-- `temperature`、`max_tokens`、`stream` 等参数会被忽略
+- `temperature`、`max_tokens`、`stream`、`parallel_tool_calls` 等参数会被忽略（仍可返回多个 tool call）
 
 ### system 与历史
 
@@ -181,7 +183,70 @@ user: ...
 请回答 <conversation> 中最后一条 user 消息。
 ```
 
-只有一条 user 且没有 system 时，会直接发送原文，不加外壳。
+只有一条 user、没有 system 且没有工具说明时，会直接发送原文，不加外壳。
+
+### 工具调用（模拟）
+
+网关支持 OpenAI 的 `tools` / `tool_choice`，但这是 **prompt 级模拟**，不是 Gemini 网页原生能力：
+
+1. 请求带 `tools` 时，网关把工具名、描述、JSON Schema 和调用协议追加到 prompt 末尾。
+2. 模型需要调用工具时输出：
+
+```text
+[[TOOL_CALL]]
+{"name":"get_weather","arguments":{"city":"Paris"}}
+[[END_TOOL_CALL]]
+```
+
+3. 网关解析后返回标准 OpenAI 格式：
+
+```json
+{
+  "choices": [{
+    "message": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [{
+        "id": "call_...",
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "arguments": "{\"city\":\"Paris\"}"
+        }
+      }]
+    },
+    "finish_reason": "tool_calls"
+  }]
+}
+```
+
+4. 客户端下一轮带上 `role: "tool"` 和 `tool_call_id`，网关会序列化成 `tool(call_...)` 行继续对话。
+
+请求示例（`tool_choice: "required"` 会强制模型调用工具）：
+
+```json
+{
+  "model": "gemini-4-hydrogen",
+  "messages": [{ "role": "user", "content": "巴黎天气怎么样？" }],
+  "tool_choice": "required",
+  "tools": [{
+    "type": "function",
+    "function": {
+      "name": "get_weather",
+      "description": "查询天气",
+      "parameters": {
+        "type": "object",
+        "properties": { "city": { "type": "string" } },
+        "required": ["city"]
+      }
+    }
+  }]
+}
+```
+
+`tool_choice` 支持 `auto`、`none`、`required` 和指定函数。模型返回非法 JSON、未知工具或不符合 `tool_choice` 时，网关返回 502。
+
+限制：依赖模型遵循文本协议，复杂工具或多轮调用可能不稳定；只支持 function 工具和文本结果；工具定义计入 60000 字符上限，过长时仍会触发 3400 字分段；不支持流式工具调用。
 
 ### 临时对话
 
@@ -274,10 +339,19 @@ taskkill /PID <占用端口的PID> /F
 | 单条输入上限 | `bridge/content.js` 的 `MAX_INPUT_CHARS` | `3400` |
 | 生成超时 | `gateway/src/gateway.js` | `300000ms` |
 
+## 测试
+
+```bash
+cd gateway
+npm test
+```
+
+集成测试会在 `18765`（WebSocket）和 `12307`（HTTP）上启动临时网关，不影响正在运行的默认端口实例。
+
 ## 已知限制
 
 - 不支持流式输出
-- 不支持工具调用 / function calling
+- 工具调用是 prompt 模拟，不是原生 function calling，且不支持流式工具调用
 - 不支持图片、音频等多模态输入
 - 不会返回真实 token 用量
 - 强依赖 Gemini 网页 DOM，Gemini 改版可能导致选择器失效
@@ -307,7 +381,11 @@ GeminiBridge/
 ├── gateway/                # 本地 Node 网关
 │   ├── src/
 │   │   ├── gateway.js      # HTTP + WebSocket 服务
-│   │   └── prompt.js       # messages -> prompt 序列化
+│   │   ├── prompt.js       # messages -> prompt 序列化
+│   │   └── tools.js        # 工具协议、tool_calls 解析
+│   ├── gateway.test.js
+│   ├── prompt.test.js
+│   ├── tools.test.js
 │   ├── package.json
 │   └── package-lock.json
 ├── LICENSE

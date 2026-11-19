@@ -7,7 +7,8 @@
   "type": "commonjs",
   "main": "src/gateway.js",
   "scripts": {
-    "start": "node src/gateway.js"
+    "start": "node src/gateway.js",
+    "test": "node --test"
   },
   "dependencies": {
     "ws": "^8.23.0"
